@@ -18,21 +18,20 @@ pub fn show_project_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
         ui.separator();
 
         ui.label("Name");
-        if ui.text_edit_singleline(&mut app.project_name).changed() {
-            app.mark_dirty();
+        if ui.text_edit_singleline(&mut app.editor.project_name).changed() {
+            app.editor.mark_dirty();
         }
 
         ui.add_space(8.0);
 
         ui.label("Origin URL");
-        if ui.text_edit_singleline(&mut app.origin_url).changed() {
-            app.mark_dirty();
+        if ui.text_edit_singleline(&mut app.editor.origin_url).changed() {
+            app.editor.mark_dirty();
         }
 
-        if !app.origin_url.trim().is_empty() {
+        if !app.editor.origin_url.trim().is_empty() {
             ui.add_space(4.0);
-
-            ui.hyperlink_to("Open Origin URL", app.origin_url.trim());
+            ui.hyperlink_to("Open Origin URL", app.editor.origin_url.trim());
         }
 
         ui.add_space(8.0);
@@ -40,13 +39,13 @@ pub fn show_project_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
         ui.label("Comment / Description");
         if ui
             .add(
-                egui::TextEdit::multiline(&mut app.comment)
+                egui::TextEdit::multiline(&mut app.editor.comment)
                     .desired_rows(6)
                     .desired_width(f32::INFINITY),
             )
             .changed()
         {
-            app.mark_dirty();
+            app.editor.mark_dirty();
         }
 
         ui.add_space(12.0);

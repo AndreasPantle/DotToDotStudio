@@ -1,4 +1,4 @@
-use crate::app::SequenceItem;
+use crate::editor::SequenceItem;
 
 /// Sanitize a string so it can safely be used as a file name.
 ///
@@ -19,7 +19,11 @@ pub fn sanitize_file_name(name: &str) -> String {
 
     let trimmed = sanitized.trim();
 
-    if trimmed.is_empty() { "export".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "export".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Escape a string for use as one CSV field.
@@ -109,7 +113,11 @@ fn draw_filled_circle(
                 let x = center_x + dx;
                 let y = center_y + dy;
 
-                if x >= 0 && y >= 0 && (x as u32) < image.width() && (y as u32) < image.height() {
+                if x >= 0
+                    && y >= 0
+                    && (x as u32) < image.width()
+                    && (y as u32) < image.height()
+                {
                     image.put_pixel(x as u32, y as u32, color);
                 }
             }
@@ -156,7 +164,13 @@ fn draw_thick_line(
         let x = start_x + dx * t;
         let y = start_y + dy * t;
 
-        draw_filled_circle(image, x.round() as i32, y.round() as i32, radius.max(1), color);
+        draw_filled_circle(
+            image,
+            x.round() as i32,
+            y.round() as i32,
+            radius.max(1),
+            color,
+        );
     }
 }
 

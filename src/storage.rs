@@ -44,17 +44,11 @@ pub struct LoadedPointData {
 // That means older database files may still be missing newer columns such as
 // `image_data`. This helper performs a tiny schema migration for that case.
 fn ensure_project_table_columns(conn: &Connection) -> Result<()> {
-    // Ask SQLite for information about all columns of the `project` table.
-    //
-    // `PRAGMA table_info(project)` returns one row per column.
-    // Column index 1 contains the column name.
     let mut stmt = conn.prepare("PRAGMA table_info(project)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
 
-    // Track whether the `image_data` column already exists.
     let mut has_image_data = false;
 
-    // Inspect all returned column names.
     for column_name_result in rows {
         let column_name = column_name_result?;
 
@@ -63,10 +57,6 @@ fn ensure_project_table_columns(conn: &Connection) -> Result<()> {
         }
     }
 
-    // If the column is missing, add it now.
-    //
-    // This upgrades older database files to the current schema version
-    // without deleting existing project data.
     if !has_image_data {
         conn.execute("ALTER TABLE project ADD COLUMN image_data BLOB", [])?;
     }
@@ -74,6 +64,8 @@ fn ensure_project_table_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+// Ensure that the `sequence` table contains all columns required by the
+// current application version.
 fn ensure_sequence_table_columns(conn: &Connection) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(sequence)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -102,7 +94,6 @@ fn ensure_sequence_table_columns(conn: &Connection) -> Result<()> {
 //
 // This schema is intentionally simple for now:
 // - one project row
-// - zero or one image row
 // - many sequence rows
 // - many point rows
 pub fn initialize_database(conn: &Connection) -> Result<()> {
@@ -153,24 +144,16 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
 }
 
 // Save the complete current app state into a SQLite database file.
-//
-// For now we use a very simple strategy:
-// - open or create the database
-// - create the schema if necessary
-// - delete old saved editor data
-// - insert the current project/sequences/points
 pub fn save_project_to_sqlite<P: AsRef<Path>>(path: P, app: &DotToDotStudioApp) -> Result<()> {
     let mut conn = Connection::open(path)?;
     initialize_database(&conn)?;
 
     let tx = conn.transaction()?;
 
-    // Remove previous saved content so the file always reflects the current editor state.
     tx.execute("DELETE FROM point", [])?;
     tx.execute("DELETE FROM sequence", [])?;
     tx.execute("DELETE FROM project", [])?;
 
-    // Save the single current project row.
     tx.execute(
         "
         INSERT INTO project (
@@ -188,9 +171,9 @@ pub fn save_project_to_sqlite<P: AsRef<Path>>(path: P, app: &DotToDotStudioApp) 
         ",
         params![
             1i64,
-            &app.project_name,
-            &app.origin_url,
-            &app.comment,
+            &app.editor.project_name,
+            &app.editor.origin_url,
+            &app.editor.comment,
             &app.image_name,
             app.image_size.map(|size| size[0] as i64),
             app.image_size.map(|size| size[1] as i64),
@@ -199,8 +182,7 @@ pub fn save_project_to_sqlite<P: AsRef<Path>>(path: P, app: &DotToDotStudioApp) 
         ],
     )?;
 
-    // Save all sequences and their points.
-    for (sequence_index, sequence) in app.sequences.iter().enumerate() {
+    for (sequence_index, sequence) in app.editor.sequences.iter().enumerate() {
         tx.execute(
             "
             INSERT INTO sequence (
@@ -259,17 +241,10 @@ pub fn save_project_to_sqlite<P: AsRef<Path>>(path: P, app: &DotToDotStudioApp) 
 }
 
 // Load the complete project state from a SQLite database file.
-//
-// This reads:
-// - project metadata
-// - embedded image bytes
-// - all sequences
-// - all points
 pub fn load_project_from_sqlite<P: AsRef<Path>>(path: P) -> Result<LoadedProjectData> {
     let conn = Connection::open(path)?;
     initialize_database(&conn)?;
 
-    // Load the single project row.
     let mut stmt = conn.prepare(
         "
         SELECT
@@ -309,7 +284,6 @@ pub fn load_project_from_sqlite<P: AsRef<Path>>(path: P) -> Result<LoadedProject
 
     let mut loaded_project = project_row;
 
-    // Load all sequences in their saved order.
     let mut sequence_stmt = conn.prepare(
         "
         SELECT
@@ -330,7 +304,7 @@ pub fn load_project_from_sqlite<P: AsRef<Path>>(path: P) -> Result<LoadedProject
 
     let sequence_rows = sequence_stmt.query_map([], |row| {
         Ok((
-            row.get::<_, i64>(0)?, // database sequence id
+            row.get::<_, i64>(0)?,
             LoadedSequenceData {
                 name: row.get(2)?,
                 visible: row.get::<_, i64>(3)? != 0,
@@ -350,7 +324,6 @@ pub fn load_project_from_sqlite<P: AsRef<Path>>(path: P) -> Result<LoadedProject
     for sequence_row in sequence_rows {
         let (sequence_id, mut sequence) = sequence_row?;
 
-        // Load all points for the current sequence in their saved order.
         let mut point_stmt = conn.prepare(
             "
             SELECT
