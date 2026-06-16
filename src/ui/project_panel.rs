@@ -18,15 +18,17 @@ pub fn show_project_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
         ui.separator();
 
         ui.label("Name");
-        if ui.text_edit_singleline(&mut app.editor.project_name).changed() {
-            app.editor.mark_dirty();
+        let mut project_name = app.editor.project_name.clone();
+        if ui.text_edit_singleline(&mut project_name).changed() {
+            app.set_project_name(project_name);
         }
 
         ui.add_space(8.0);
 
         ui.label("Origin URL");
-        if ui.text_edit_singleline(&mut app.editor.origin_url).changed() {
-            app.editor.mark_dirty();
+        let mut origin_url = app.editor.origin_url.clone();
+        if ui.text_edit_singleline(&mut origin_url).changed() {
+            app.set_origin_url(origin_url);
         }
 
         if !app.editor.origin_url.trim().is_empty() {
@@ -37,15 +39,16 @@ pub fn show_project_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
         ui.add_space(8.0);
 
         ui.label("Comment / Description");
+        let mut comment = app.editor.comment.clone();
         if ui
             .add(
-                egui::TextEdit::multiline(&mut app.editor.comment)
+                egui::TextEdit::multiline(&mut comment)
                     .desired_rows(6)
                     .desired_width(f32::INFINITY),
             )
             .changed()
         {
-            app.editor.mark_dirty();
+            app.set_comment(comment);
         }
 
         ui.add_space(12.0);

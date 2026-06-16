@@ -28,56 +28,22 @@ pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
 
         ui.horizontal(|ui| {
             if ui.button("Add").clicked() {
-                let next_index = app.editor.sequences.len() + 1;
-
-                app.editor.push_undo_snapshot();
-
-                app.editor.sequences.push(SequenceItem {
-                    name: format!("Sequence {next_index}"),
-                    visible: true,
-                    color: egui::Color32::from_rgb(120, 180, 255),
-                    line_thickness: 3.0,
-                    start_value: 1,
-                    points: Vec::new(),
-                });
-
-                app.editor.selected_sequence = Some(app.editor.sequences.len() - 1);
-                app.editor.selected_point = None;
-
-                app.editor.mark_dirty();
-                app.status_message = "Sequence added".to_string();
+                app.add_sequence();
             }
 
             let can_remove =
                 app.editor.selected_sequence.is_some() && !app.editor.sequences.is_empty();
 
-            if ui.add_enabled(can_remove, egui::Button::new("Remove")).clicked()
-                && let Some(index) = app.editor.selected_sequence
-                && index < app.editor.sequences.len()
-            {
-                app.editor.push_undo_snapshot();
-
-                app.editor.sequences.remove(index);
-
-                if app.editor.sequences.is_empty() {
-                    app.editor.selected_sequence = None;
-                    app.editor.selected_point = None;
-                } else if index >= app.editor.sequences.len() {
-                    app.editor.selected_sequence = Some(app.editor.sequences.len() - 1);
-                    app.editor.selected_point = None;
-                } else {
-                    app.editor.selected_sequence = Some(index);
-                    app.editor.selected_point = None;
-                }
-
-                app.editor.mark_dirty();
-                app.status_message = "Sequence removed".to_string();
+            if ui.add_enabled(can_remove, egui::Button::new("Remove")).clicked() {
+                app.remove_selected_sequence();
             }
         });
 
         ui.add_space(8.0);
         ui.separator();
         ui.label(egui::RichText::new("Sequence List").strong());
+
+        let mut sequence_to_select: Option<usize> = None;
 
         for (index, sequence) in app.editor.sequences.iter().enumerate() {
             let is_selected = app.editor.selected_sequence == Some(index);
@@ -87,10 +53,12 @@ pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
                 format!("{} {} ({})", visibility_marker, sequence.name, sequence.points.len());
 
             if ui.selectable_label(is_selected, label).clicked() {
-                app.editor.selected_sequence = Some(index);
-                app.editor.selected_point = None;
-                app.status_message = format!("Selected: {}", sequence.name);
+                sequence_to_select = Some(index);
             }
+        }
+
+        if let Some(index) = sequence_to_select {
+            app.select_sequence(index);
         }
 
         ui.add_space(12.0);
@@ -109,6 +77,8 @@ pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
             let mut remove_selected_point = false;
             let mut renumber_from_start = false;
             let mut renumber_from_selected = false;
+
+            let mut point_to_select: Option<usize> = None;
 
             if let Some(sequence) = app.editor.sequences.get_mut(sequence_index) {
                 ui.label("Name");
@@ -184,9 +154,7 @@ pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
                             let response = ui.selectable_label(is_selected, label);
 
                             if response.clicked() {
-                                app.editor.selected_point = Some(point_index);
-                                app.editor.scroll_selected_point_into_view = true;
-                                app.status_message = format!("Selected point {}", point.value);
+                                point_to_select = Some(point_index);
                             }
 
                             let is_selected_now = app.editor.selected_point == Some(point_index);
@@ -233,6 +201,10 @@ pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
                 }
             } else {
                 ui.label("No valid sequence selected.");
+            }
+
+            if let Some(point_index) = point_to_select {
+                app.select_point(point_index);
             }
 
             if sequence_name_changed

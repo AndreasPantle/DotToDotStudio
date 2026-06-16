@@ -116,6 +116,114 @@ impl Default for DotToDotStudioApp {
 }
 
 impl DotToDotStudioApp {
+    /// Update the project name and mark the editor dirty when it changed.
+    pub fn set_project_name(&mut self, value: String) {
+        if self.editor.project_name != value {
+            self.editor.project_name = value;
+            self.editor.mark_dirty();
+        }
+    }
+
+    /// Update the origin URL and mark the editor dirty when it changed.
+    pub fn set_origin_url(&mut self, value: String) {
+        if self.editor.origin_url != value {
+            self.editor.origin_url = value;
+            self.editor.mark_dirty();
+        }
+    }
+
+    /// Update the project comment and mark the editor dirty when it changed.
+    pub fn set_comment(&mut self, value: String) {
+        if self.editor.comment != value {
+            self.editor.comment = value;
+            self.editor.mark_dirty();
+        }
+    }
+
+    /// Add a new empty sequence and select it immediately.
+    pub fn add_sequence(&mut self) {
+        let next_index = self.editor.sequences.len() + 1;
+
+        self.editor.push_undo_snapshot();
+
+        self.editor.sequences.push(SequenceItem {
+            name: format!("Sequence {next_index}"),
+            visible: true,
+            color: egui::Color32::from_rgb(120, 180, 255),
+            line_thickness: 3.0,
+            start_value: 1,
+            points: Vec::new(),
+        });
+
+        self.editor.selected_sequence = Some(self.editor.sequences.len() - 1);
+        self.editor.selected_point = None;
+        self.editor.mark_dirty();
+        self.status_message = "Sequence added".to_string();
+    }
+
+    /// Remove the currently selected sequence and keep selection valid.
+    pub fn remove_selected_sequence(&mut self) {
+        let Some(index) = self.editor.selected_sequence else {
+            self.status_message = "No sequence selected".to_string();
+            return;
+        };
+
+        if index >= self.editor.sequences.len() {
+            self.status_message = "Selected sequence is invalid".to_string();
+            return;
+        }
+
+        self.editor.push_undo_snapshot();
+        self.editor.sequences.remove(index);
+
+        if self.editor.sequences.is_empty() {
+            self.editor.selected_sequence = None;
+            self.editor.selected_point = None;
+        } else if index >= self.editor.sequences.len() {
+            self.editor.selected_sequence = Some(self.editor.sequences.len() - 1);
+            self.editor.selected_point = None;
+        } else {
+            self.editor.selected_sequence = Some(index);
+            self.editor.selected_point = None;
+        }
+
+        self.editor.mark_dirty();
+        self.status_message = "Sequence removed".to_string();
+    }
+
+    /// Select a sequence and clear the point selection.
+    pub fn select_sequence(&mut self, index: usize) {
+        if let Some(sequence) = self.editor.sequences.get(index) {
+            self.editor.selected_sequence = Some(index);
+            self.editor.selected_point = None;
+            self.status_message = format!("Selected: {}", sequence.name);
+        } else {
+            self.status_message = "Selected sequence is invalid".to_string();
+        }
+    }
+
+    /// Select a point inside the currently selected sequence.
+    pub fn select_point(&mut self, point_index: usize) {
+        let Some(sequence_index) = self.editor.selected_sequence else {
+            self.status_message = "No sequence selected".to_string();
+            return;
+        };
+
+        let Some(sequence) = self.editor.sequences.get(sequence_index) else {
+            self.status_message = "Selected sequence is invalid".to_string();
+            return;
+        };
+
+        let Some(point) = sequence.points.get(point_index) else {
+            self.status_message = "Selected point is invalid".to_string();
+            return;
+        };
+
+        self.editor.selected_point = Some(point_index);
+        self.editor.scroll_selected_point_into_view = true;
+        self.status_message = format!("Selected point {}", point.value);
+    }
+
     // Open a native file dialog, load an image from disk,
     // keep the original file bytes for later database storage,
     // decode the image, and upload it as an egui texture.
