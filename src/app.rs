@@ -1,3 +1,4 @@
+use crate::export_logic;
 use crate::storage;
 use crate::ui::{export, project_panel, sequences_panel};
 use eframe::egui;
@@ -53,6 +54,9 @@ pub struct SequenceItem {
 }
 
 // Export scope options for the export dialog.
+//
+// The export scope is intentionally GUI-agnostic enough that it can later
+// be reused by another frontend as well.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExportScope {
     SelectedSequence,
@@ -61,8 +65,9 @@ pub enum ExportScope {
 
 // UI state for the export dialog.
 //
-// This state is intentionally small for now and will grow as the export
-// feature becomes more capable.
+// This stays in the app adapter layer for now because it is directly tied to
+// user interface state. Later, a different GUI toolkit could have its own
+// dialog state while still reusing the same export logic underneath.
 pub struct ExportDialogState {
     pub open: bool,
     pub export_points_as_csv: bool,
@@ -87,8 +92,15 @@ pub struct EditorSnapshot {
 }
 
 // This struct stores the full UI/application state.
-// In egui/eframe, the app state lives inside a struct like this,
-// and the `update()` method redraws the UI every frame based on that state.
+//
+// At the moment this type still mixes:
+// - GUI-facing state
+// - editor state
+// - application use cases
+//
+// That is acceptable for now, but the long-term direction is to gradually
+// separate these responsibilities so the functional/editor logic can later
+// be reused by another GUI backend.
 pub struct DotToDotStudioApp {
     // GPU texture handle for the currently loaded image.
     // `None` means that no image has been imported yet.
@@ -199,130 +211,15 @@ impl Default for DotToDotStudioApp {
     }
 }
 
-fn sanitize_file_name(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => ch,
-        })
-        .collect();
-
-    let trimmed = sanitized.trim();
-
-    if trimmed.is_empty() { "export".to_string() } else { trimmed.to_string() }
-}
-
-fn csv_escape(value: &str) -> String {
-    let escaped = value.replace('"', "\"\"");
-
-    if escaped.contains(',') || escaped.contains('"') || escaped.contains('\n') {
-        format!("\"{}\"", escaped)
-    } else {
-        escaped
-    }
-}
-
-fn draw_filled_circle(
-    image: &mut image::RgbaImage,
-    center_x: i32,
-    center_y: i32,
-    radius: i32,
-    color: image::Rgba<u8>,
-) {
-    let radius_sq = radius * radius;
-
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            if dx * dx + dy * dy <= radius_sq {
-                let x = center_x + dx;
-                let y = center_y + dy;
-
-                if x >= 0 && y >= 0 && (x as u32) < image.width() && (y as u32) < image.height() {
-                    image.put_pixel(x as u32, y as u32, color);
-                }
-            }
-        }
-    }
-}
-
-// fn draw_line(
-//     image: &mut image::RgbaImage,
-//     start_x: f32,
-//     start_y: f32,
-//     end_x: f32,
-//     end_y: f32,
-//     color: image::Rgba<u8>,
-// ) {
-//     let dx = end_x - start_x;
-//     let dy = end_y - start_y;
-
-//     let steps = dx.abs().max(dy.abs()) as i32;
-
-//     if steps <= 0 {
-//         let x = start_x.round() as i32;
-//         let y = start_y.round() as i32;
-
-//         if x >= 0 && y >= 0 && (x as u32) < image.width() && (y as u32) < image.height() {
-//             image.put_pixel(x as u32, y as u32, color);
-//         }
-
-//         return;
-//     }
-
-//     for step in 0..=steps {
-//         let t = step as f32 / steps as f32;
-//         let x = start_x + dx * t;
-//         let y = start_y + dy * t;
-
-//         let px = x.round() as i32;
-//         let py = y.round() as i32;
-
-//         if px >= 0 && py >= 0 && (px as u32) < image.width() && (py as u32) < image.height() {
-//             image.put_pixel(px as u32, py as u32, color);
-//         }
-//     }
-// }
-
-fn draw_thick_line(
-    image: &mut image::RgbaImage,
-    start_x: f32,
-    start_y: f32,
-    end_x: f32,
-    end_y: f32,
-    thickness: f32,
-    color: image::Rgba<u8>,
-) {
-    let dx = end_x - start_x;
-    let dy = end_y - start_y;
-
-    let steps = dx.abs().max(dy.abs()) as i32;
-    let radius = (thickness.max(1.0) * 0.5).round() as i32;
-
-    if steps <= 0 {
-        draw_filled_circle(
-            image,
-            start_x.round() as i32,
-            start_y.round() as i32,
-            radius.max(1),
-            color,
-        );
-        return;
-    }
-
-    for step in 0..=steps {
-        let t = step as f32 / steps as f32;
-        let x = start_x + dx * t;
-        let y = start_y + dy * t;
-
-        draw_filled_circle(image, x.round() as i32, y.round() as i32, radius.max(1), color);
-    }
-}
-
 impl DotToDotStudioApp {
     // Open a native file dialog, load an image from disk,
     // keep the original file bytes for later database storage,
     // decode the image, and upload it as an egui texture.
+    //
+    // This remains in the app layer because it depends on:
+    // - file dialogs
+    // - egui texture creation
+    // - UI-facing status reporting
     fn import_image(&mut self, ctx: &egui::Context) {
         let file =
             FileDialog::new().add_filter("Image", &["png", "jpg", "jpeg", "bmp"]).pick_file();
@@ -373,6 +270,9 @@ impl DotToDotStudioApp {
     }
 
     // Decode raw image bytes and upload them as an egui texture.
+    //
+    // This is deliberately UI-specific because the result is a GPU texture handle
+    // owned by the current GUI toolkit.
     fn load_texture_from_image_bytes(
         &self,
         ctx: &egui::Context,
@@ -390,6 +290,11 @@ impl DotToDotStudioApp {
     }
 
     // Open a save dialog and write the current project state into a SQLite database file.
+    //
+    // This stays in the app layer for now because it still owns:
+    // - the UI-facing status text
+    // - the file dialog decision
+    // - the current combined state object
     fn save_project(&mut self) {
         if self.image_bytes.is_none() {
             self.status_message = "Cannot save project without an embedded image".to_string();
@@ -419,6 +324,9 @@ impl DotToDotStudioApp {
     }
 
     // Reset the application to a fresh empty project state.
+    //
+    // This is still implemented directly on the app type because the editor state
+    // has not yet been extracted into its own reusable core module.
     fn new_project(&mut self) {
         self.image_texture = None;
         self.image_name = None;
@@ -458,6 +366,13 @@ impl DotToDotStudioApp {
 
     // Open a project file dialog, load the project from SQLite,
     // rebuild the embedded image texture, and restore the editor state.
+    //
+    // This method still spans:
+    // - persistence loading
+    // - conversion into UI state
+    // - egui texture creation
+    //
+    // Later this can be split further once the editor core is extracted.
     fn load_project(&mut self, ctx: &egui::Context) {
         let file =
             FileDialog::new().add_filter("DotToDotStudio Project", &["db", "sqlite"]).pick_file();
@@ -537,14 +452,18 @@ impl DotToDotStudioApp {
     }
 
     // Export the embedded image bytes back to a normal image file on disk.
+    //
+    // This legacy menu action is now intentionally implemented through the
+    // more explicit "without overlay" export path.
     fn export_image(&mut self) {
         self.export_image_without_overlay();
     }
 
     // Draw the top menu bar.
-    // Right now it contains:
-    // - File menu
-    // - View menu
+    //
+    // This is purely GUI composition code. The commands it triggers may still
+    // call mixed app/use-case methods, but the menu construction itself belongs
+    // entirely to the egui adapter layer.
     fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -648,11 +567,8 @@ impl DotToDotStudioApp {
     }
 
     // Draw the status bar at the bottom of the window.
-    // It shows general app status and also information about:
-    // - zoom
-    // - pan
-    // - current image name
-    // - current mouse position
+    //
+    // This remains a view concern and therefore stays entirely inside the app adapter.
     fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -692,8 +608,13 @@ impl DotToDotStudioApp {
     }
 
     // Draw the main work area in the center of the window.
-    // If an image is loaded, it is displayed here and can be zoomed/panned.
-    // If no image is loaded yet, we show a simple placeholder message.
+    //
+    // This is one of the most GUI-specific methods in the program:
+    // - it owns immediate-mode drawing
+    // - it converts editor data into on-screen primitives
+    // - it handles direct pointer interaction
+    //
+    // This logic should stay in the GUI adapter layer even after more refactoring.
     fn draw_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(texture) = &self.image_texture {
@@ -833,10 +754,13 @@ impl DotToDotStudioApp {
     }
 
     // Currently unused helper.
-    // It exists because your current trait setup expects this structure.
+    //
+    // It exists because the current trait setup expects this structure.
     fn ui_placeholder(&mut self, _frame: &mut eframe::Frame) {}
 
     // Reset the current view to default values.
+    //
+    // This is view-state logic rather than domain logic, so it remains on the app adapter.
     fn reset_view(&mut self) {
         self.zoom = 1.0;
         self.pan = Vec2::ZERO;
@@ -844,6 +768,8 @@ impl DotToDotStudioApp {
     }
 
     // Increase zoom by a small step.
+    //
+    // View-specific behavior belongs to the GUI adapter layer.
     fn zoom_in(&mut self) {
         self.zoom = (self.zoom * 1.05).clamp(0.05, 20.0);
         self.status_message = format!("Zoom: {:.2}x", self.zoom);
@@ -925,6 +851,7 @@ impl DotToDotStudioApp {
     }
 
     // Handle keyboard shortcuts globally.
+    //
     // We first collect actions into boolean flags and execute them afterwards.
     // This pattern avoids borrow conflicts and keeps the code readable.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1091,6 +1018,9 @@ impl DotToDotStudioApp {
     }
 
     // Save the current editable state so it can be restored with Undo later.
+    //
+    // This is editor behavior and will eventually be a good candidate for extraction
+    // into a reusable editor core module.
     pub fn push_undo_snapshot(&mut self) {
         self.undo_stack.push(EditorSnapshot {
             sequences: self.sequences.clone(),
@@ -1124,6 +1054,8 @@ impl DotToDotStudioApp {
     // Add a point to the currently selected sequence.
     //
     // The point must already be in image coordinates.
+    //
+    // This is editor logic that is still kept on the app for now.
     fn add_point_to_selected_sequence(&mut self, image_pos: Pos2) {
         let Some(sequence_index) = self.selected_sequence else {
             self.status_message = "No sequence selected".to_string();
@@ -1363,9 +1295,6 @@ impl DotToDotStudioApp {
                 let start = window[0];
                 let end = window[1];
 
-                //painter.line_segment([start, end], egui::Stroke::new(2.0, sequence.color));
-                // Changed thikness from 2.0 to 3.0 for better visibility.
-                //painter.line_segment([start, end], egui::Stroke::new(3.0, sequence.color));
                 painter.line_segment(
                     [start, end],
                     egui::Stroke::new(sequence.line_thickness, sequence.color),
@@ -1379,7 +1308,6 @@ impl DotToDotStudioApp {
                 let is_selected = self.selected_sequence == Some(sequence_index)
                     && self.selected_point == Some(point_index);
 
-                //let point_radius = if is_selected { 6.0 } else { 4.0 };
                 let point_radius = if is_selected { 9.0 } else { 6.0 };
                 let stroke_color =
                     if is_selected { egui::Color32::YELLOW } else { egui::Color32::BLACK };
@@ -1388,7 +1316,6 @@ impl DotToDotStudioApp {
                 painter.circle_stroke(
                     screen_pos,
                     point_radius,
-                    //egui::Stroke::new(1.5, stroke_color),
                     egui::Stroke::new(2.0, stroke_color),
                 );
 
@@ -1396,7 +1323,6 @@ impl DotToDotStudioApp {
                     screen_pos + Vec2::new(8.0, -8.0),
                     egui::Align2::LEFT_BOTTOM,
                     format!("{}", point.value),
-                    //egui::FontId::proportional(14.0),
                     egui::FontId::proportional(16.0),
                     sequence.color,
                 );
@@ -1638,7 +1564,21 @@ impl DotToDotStudioApp {
         self.status_message = format!("Selected point {} in {}", point_value, sequence_name);
     }
 
+    // Return the sequence indices that should be exported for the current export scope.
+    //
+    // This is intentionally small and independent from egui widgets, but it still
+    // lives on the app because export scope currently belongs to dialog state.
+    fn export_sequence_indices(&self) -> Vec<usize> {
+        match self.export_dialog.scope {
+            ExportScope::SelectedSequence => self.selected_sequence.into_iter().collect(),
+            ExportScope::AllSequences => (0..self.sequences.len()).collect(),
+        }
+    }
+
     // Export points as CSV according to the currently selected export scope.
+    //
+    // The file dialog and status reporting remain in the app layer.
+    // The actual CSV generation has been moved to `export_logic`.
     pub fn export_points_as_csv(&mut self) {
         let (default_file_name, csv_content) = match self.export_dialog.scope {
             ExportScope::SelectedSequence => {
@@ -1658,8 +1598,9 @@ impl DotToDotStudioApp {
                     return;
                 }
 
-                let file_name = format!("{}.csv", sanitize_file_name(&sequence.name));
-                let csv = self.build_csv_for_selected_sequence(sequence_index);
+                let file_name = format!("{}.csv", export_logic::sanitize_file_name(&sequence.name));
+
+                let csv = export_logic::build_csv_for_selected_sequence(sequence_index, sequence);
 
                 (file_name, csv)
             }
@@ -1677,7 +1618,7 @@ impl DotToDotStudioApp {
                     return;
                 }
 
-                let csv = self.build_csv_for_all_sequences();
+                let csv = export_logic::build_csv_for_all_sequences(&self.sequences);
                 ("all_sequences.csv".to_string(), csv)
             }
         };
@@ -1702,53 +1643,10 @@ impl DotToDotStudioApp {
         }
     }
 
-    // Build CSV output for the currently selected sequence.
-    fn build_csv_for_selected_sequence(&self, sequence_index: usize) -> String {
-        let sequence = &self.sequences[sequence_index];
-
-        let mut csv = String::new();
-        csv.push_str("sequence_index,sequence_name,start_value,point_index,point_value,x,y\n");
-
-        for (point_index, point) in sequence.points.iter().enumerate() {
-            csv.push_str(&format!(
-                "{},{},{},{},{},{:.3},{:.3}\n",
-                sequence_index,
-                csv_escape(&sequence.name),
-                sequence.start_value,
-                point_index,
-                point.value,
-                point.position.x,
-                point.position.y
-            ));
-        }
-
-        csv
-    }
-
-    // Build CSV output for all sequences in the project.
-    fn build_csv_for_all_sequences(&self) -> String {
-        let mut csv = String::new();
-        csv.push_str("sequence_index,sequence_name,start_value,point_index,point_value,x,y\n");
-
-        for (sequence_index, sequence) in self.sequences.iter().enumerate() {
-            for (point_index, point) in sequence.points.iter().enumerate() {
-                csv.push_str(&format!(
-                    "{},{},{},{},{},{:.3},{:.3}\n",
-                    sequence_index,
-                    csv_escape(&sequence.name),
-                    sequence.start_value,
-                    point_index,
-                    point.value,
-                    point.position.x,
-                    point.position.y
-                ));
-            }
-        }
-
-        csv
-    }
-
     // Export the embedded original image without any overlay.
+    //
+    // This export path intentionally bypasses `export_logic` because it does not
+    // perform any rendering transformation. It simply writes the stored image bytes.
     pub fn export_image_without_overlay(&mut self) {
         let Some(image_bytes) = &self.image_bytes else {
             self.status_message = "No embedded image available for export".to_string();
@@ -1777,18 +1675,18 @@ impl DotToDotStudioApp {
 
     // Export the embedded image with visible sequence overlays.
     //
-    // The first version draws:
-    // - connecting lines
-    // - point markers
-    //
-    // Numeric labels can be added later with a text rendering library.
+    // The rendering logic itself lives in `export_logic`.
+    // This method remains responsible for:
+    // - validating current app state
+    // - choosing the export target file
+    // - reporting success or failure to the UI
     pub fn export_image_with_overlay(&mut self) {
         let Some(image_bytes) = &self.image_bytes else {
             self.status_message = "No embedded image available for overlay export".to_string();
             return;
         };
 
-        let mut rgba_image = match image::load_from_memory(image_bytes) {
+        let base_image = match image::load_from_memory(image_bytes) {
             Ok(dynamic_image) => dynamic_image.to_rgba8(),
             Err(err) => {
                 self.status_message = format!("Failed to decode image for overlay export: {err}");
@@ -1803,72 +1701,26 @@ impl DotToDotStudioApp {
             return;
         }
 
-        let mut drew_anything = false;
-
-        for sequence_index in sequence_indices {
-            let sequence = &self.sequences[sequence_index];
-
-            if !sequence.visible {
-                continue;
-            }
-
-            let overlay_color = image::Rgba([
-                sequence.color.r(),
-                sequence.color.g(),
-                sequence.color.b(),
-                sequence.color.a(),
-            ]);
-
-            for window in sequence.points.windows(2) {
-                let start = &window[0];
-                let end = &window[1];
-
-                // draw_line(
-                //     &mut rgba_image,
-                //     start.position.x,
-                //     start.position.y,
-                //     end.position.x,
-                //     end.position.y,
-                //     overlay_color,
-                // );
-
-                draw_thick_line(
-                    &mut rgba_image,
-                    start.position.x,
-                    start.position.y,
-                    end.position.x,
-                    end.position.y,
-                    sequence.line_thickness,
-                    overlay_color,
-                );
-
-                drew_anything = true;
-            }
-
-            if self.export_dialog.include_points_in_overlay {
-                for point in &sequence.points {
-                    draw_filled_circle(
-                        &mut rgba_image,
-                        point.position.x.round() as i32,
-                        point.position.y.round() as i32,
-                        5,
-                        overlay_color,
-                    );
-
-                    drew_anything = true;
-                }
-            }
-        }
-
-        if !drew_anything {
+        if !export_logic::has_visible_overlay_content(
+            &self.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        ) {
             self.status_message = "Nothing to export for the selected overlay scope".to_string();
             return;
         }
 
+        let rgba_image = export_logic::render_image_with_overlay(
+            &base_image,
+            &self.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        );
+
         let base_name = self
             .image_name
             .as_deref()
-            .map(sanitize_file_name)
+            .map(export_logic::sanitize_file_name)
             .unwrap_or_else(|| "exported_image".to_string());
 
         let default_file_name = format!("{base_name}_overlay.png");
@@ -1893,26 +1745,15 @@ impl DotToDotStudioApp {
         }
     }
 
-    // Return the sequence indices that should be exported for the current export scope.
-    fn export_sequence_indices(&self) -> Vec<usize> {
-        match self.export_dialog.scope {
-            ExportScope::SelectedSequence => self.selected_sequence.into_iter().collect(),
-            ExportScope::AllSequences => (0..self.sequences.len()).collect(),
-        }
-    }
-
     // Export only the overlay as a transparent PNG.
     //
-    // This renders visible sequence overlays onto a transparent image without
-    // including the original background image.
+    // This uses the shared rendering logic in `export_logic` and keeps file/UX
+    // concerns in the app layer.
     pub fn export_overlay_only(&mut self) {
         let Some([width, height]) = self.image_size else {
             self.status_message = "No image size available for overlay export".to_string();
             return;
         };
-
-        let mut rgba_image =
-            image::RgbaImage::from_pixel(width as u32, height as u32, image::Rgba([0, 0, 0, 0]));
 
         let sequence_indices = self.export_sequence_indices();
 
@@ -1921,67 +1762,22 @@ impl DotToDotStudioApp {
             return;
         }
 
-        let mut drew_anything = false;
-
-        for sequence_index in sequence_indices {
-            let sequence = &self.sequences[sequence_index];
-
-            if !sequence.visible {
-                continue;
-            }
-
-            let overlay_color = image::Rgba([
-                sequence.color.r(),
-                sequence.color.g(),
-                sequence.color.b(),
-                sequence.color.a(),
-            ]);
-
-            for window in sequence.points.windows(2) {
-                let start = &window[0];
-                let end = &window[1];
-
-                // draw_line(
-                //     &mut rgba_image,
-                //     start.position.x,
-                //     start.position.y,
-                //     end.position.x,
-                //     end.position.y,
-                //     overlay_color,
-                // );
-
-                draw_thick_line(
-                    &mut rgba_image,
-                    start.position.x,
-                    start.position.y,
-                    end.position.x,
-                    end.position.y,
-                    sequence.line_thickness,
-                    overlay_color,
-                );
-
-                drew_anything = true;
-            }
-
-            if self.export_dialog.include_points_in_overlay {
-                for point in &sequence.points {
-                    draw_filled_circle(
-                        &mut rgba_image,
-                        point.position.x.round() as i32,
-                        point.position.y.round() as i32,
-                        5,
-                        overlay_color,
-                    );
-
-                    drew_anything = true;
-                }
-            }
-        }
-
-        if !drew_anything {
+        if !export_logic::has_visible_overlay_content(
+            &self.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        ) {
             self.status_message = "Nothing to export for the selected overlay scope".to_string();
             return;
         }
+
+        let rgba_image = export_logic::render_overlay_image(
+            width as u32,
+            height as u32,
+            &self.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        );
 
         let default_file_name = "overlay_only.png".to_string();
 
@@ -2008,8 +1804,9 @@ impl DotToDotStudioApp {
 
 impl eframe::App for DotToDotStudioApp {
     // `update()` is the heart of an egui app.
-    // It is called repeatedly every frame.
-    // In immediate mode GUI, we rebuild the full UI each frame from the current state.
+    //
+    // It is called repeatedly every frame. In immediate mode GUI, we rebuild
+    // the full UI each frame from the current state.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let close_requested = ctx.input(|i| i.viewport().close_requested());
 
@@ -2034,7 +1831,8 @@ impl eframe::App for DotToDotStudioApp {
         self.ui_placeholder(frame);
     }
 
-    // Your current setup expects this method as well.
+    // The current setup also expects this method.
+    //
     // We do not use it yet, because the real UI is built in `update()`.
     fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
