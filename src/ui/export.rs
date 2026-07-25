@@ -45,6 +45,19 @@ pub fn show_export_dialog(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
                 "Export overlay only (transparent PNG)",
             );
 
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Vector (SVG)").small().weak());
+
+            ui.checkbox(
+                &mut app.export_dialog.export_overlay_as_svg,
+                "Export overlay only (SVG, transparent, scalable)",
+            );
+
+            ui.checkbox(
+                &mut app.export_dialog.export_image_with_overlay_as_svg,
+                "Export image with overlay (SVG, embedded image)",
+            );
+
             ui.checkbox(
                 &mut app.export_dialog.include_points_in_overlay,
                 "Include points in overlay exports",
@@ -90,6 +103,16 @@ pub fn show_export_dialog(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
 
                     if app.export_dialog.export_overlay_only {
                         app.export_overlay_only();
+                        did_export_anything = true;
+                    }
+
+                    if app.export_dialog.export_overlay_as_svg {
+                        app.export_overlay_as_svg();
+                        did_export_anything = true;
+                    }
+
+                    if app.export_dialog.export_image_with_overlay_as_svg {
+                        app.export_image_with_overlay_as_svg();
                         did_export_anything = true;
                     }
 

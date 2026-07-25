@@ -15,6 +15,7 @@
 //
 // In short:
 // `mod.rs` wires the files in this folder together into one named module.
+pub mod about;
 pub mod export;
 pub mod project_panel;
 pub mod sequences_panel;

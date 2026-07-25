@@ -1,7 +1,8 @@
 use crate::editor::{EditorState, SequenceItem, SequencePoint};
 use crate::export_logic;
 use crate::storage;
-use crate::ui::{export, project_panel, sequences_panel};
+use crate::ui::{about, export, project_panel, sequences_panel};
+use crate::ui::about::AboutDialogState;
 use eframe::egui;
 use egui::{ColorImage, Pos2, Rect, Sense, TextureHandle, Vec2};
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
@@ -26,6 +27,8 @@ pub struct ExportDialogState {
     pub export_image_without_overlay: bool,
     pub export_image_with_overlay: bool,
     pub export_overlay_only: bool,
+    pub export_overlay_as_svg: bool,
+    pub export_image_with_overlay_as_svg: bool,
     pub include_points_in_overlay: bool,
     pub scope: ExportScope,
 }
@@ -61,6 +64,17 @@ pub struct DotToDotStudioApp {
 
     // State for the export dialog.
     pub export_dialog: ExportDialogState,
+
+    // State for the About dialog.
+    pub about_dialog: AboutDialogState,
+
+    // Path of the project file that is currently open, if any.
+    //
+    // This is set after a successful "Load Project" or "Save Project" and is
+    // used to pre-fill the save dialog (file name + directory) the next time
+    // the project is saved, so overwriting the same file does not require
+    // remembering or re-typing its name.
+    pub project_file_path: Option<std::path::PathBuf>,
 
     // Close confirmation flag. When true, the app will prompt the user to confirm discarding unsaved changes.
     pub allow_close_without_prompt: bool,
@@ -102,9 +116,13 @@ impl Default for DotToDotStudioApp {
                 export_image_without_overlay: false,
                 export_image_with_overlay: true,
                 export_overlay_only: false,
+                export_overlay_as_svg: false,
+                export_image_with_overlay_as_svg: false,
                 include_points_in_overlay: true,
                 scope: ExportScope::SelectedSequence,
             },
+            about_dialog: AboutDialogState::default(),
+            project_file_path: None,
             allow_close_without_prompt: false,
             zoom: 1.0,
             pan: Vec2::ZERO,
@@ -310,10 +328,29 @@ impl DotToDotStudioApp {
             return;
         }
 
-        let file = FileDialog::new()
-            .add_filter("DotToDotStudio Project", &["db", "sqlite"])
-            .set_file_name("project.sqlite")
-            .save_file();
+        // Pre-fill the dialog with the currently open project's file name and
+        // directory, if there is one, so saving (overwriting) it again does
+        // not require remembering or re-typing the name.
+        let mut file_dialog =
+            FileDialog::new().add_filter("DotToDotStudio Project", &["db", "sqlite"]);
+
+        match &self.project_file_path {
+            Some(existing_path) => {
+                if let Some(file_name) = existing_path.file_name().and_then(|name| name.to_str())
+                {
+                    file_dialog = file_dialog.set_file_name(file_name);
+                }
+
+                if let Some(parent_dir) = existing_path.parent() {
+                    file_dialog = file_dialog.set_directory(parent_dir);
+                }
+            }
+            None => {
+                file_dialog = file_dialog.set_file_name("project.sqlite");
+            }
+        }
+
+        let file = file_dialog.save_file();
 
         let Some(path) = file else {
             self.status_message = "Save cancelled".to_string();
@@ -325,6 +362,7 @@ impl DotToDotStudioApp {
                 self.editor.clear_dirty();
                 self.allow_close_without_prompt = false;
                 self.status_message = format!("Project saved: {}", path.display());
+                self.project_file_path = Some(path);
             }
             Err(err) => {
                 self.status_message = format!("Failed to save project: {err}");
@@ -342,6 +380,8 @@ impl DotToDotStudioApp {
         self.image_size = None;
         self.image_size_bytes = None;
         self.image_bytes = None;
+
+        self.project_file_path = None;
 
         self.editor.new_project();
 
@@ -428,6 +468,7 @@ impl DotToDotStudioApp {
                 self.pan = Vec2::ZERO;
 
                 self.status_message = format!("Project loaded: {}", path.display());
+                self.project_file_path = Some(path);
             }
             Err(err) => {
                 self.status_message = format!("Failed to load project: {err}");
@@ -543,6 +584,13 @@ impl DotToDotStudioApp {
 
                     if ui.button("Reset View\tCtrl+R").clicked() {
                         self.reset_view();
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About...").clicked() {
+                        self.about_dialog.open = true;
                         ui.close();
                     }
                 });
@@ -1412,6 +1460,150 @@ impl DotToDotStudioApp {
             }
         }
     }
+
+    // Export only the overlay as a scalable, transparent SVG document.
+    //
+    // Unlike the PNG variant, the lines and points remain real vector shapes,
+    // so the result stays crisp at any zoom level or print size.
+    pub fn export_overlay_as_svg(&mut self) {
+        let Some([width, height]) = self.image_size else {
+            self.status_message = "No image size available for overlay export".to_string();
+            return;
+        };
+
+        let sequence_indices = self.export_sequence_indices();
+
+        if sequence_indices.is_empty() {
+            self.status_message = "No sequence selected for overlay export".to_string();
+            return;
+        }
+
+        if !export_logic::has_visible_overlay_content(
+            &self.editor.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        ) {
+            self.status_message = "Nothing to export for the selected overlay scope".to_string();
+            return;
+        }
+
+        let svg_content = export_logic::build_svg_overlay(
+            width as u32,
+            height as u32,
+            &self.editor.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        );
+
+        let default_file_name = "overlay_only.svg".to_string();
+
+        let file = FileDialog::new()
+            .add_filter("SVG", &["svg"])
+            .set_file_name(&default_file_name)
+            .save_file();
+
+        let Some(path) = file else {
+            self.status_message = "Overlay SVG export cancelled".to_string();
+            return;
+        };
+
+        match std::fs::write(&path, svg_content) {
+            Ok(()) => {
+                self.status_message = format!("Exported overlay as SVG: {}", path.display());
+            }
+            Err(err) => {
+                self.status_message = format!("Failed to export overlay SVG: {err}");
+            }
+        }
+    }
+
+    // Export the embedded image with visible sequence overlays as a single
+    // SVG document: the raster image is embedded as a base64 data URI, and
+    // the overlay is drawn on top as real vector shapes.
+    pub fn export_image_with_overlay_as_svg(&mut self) {
+        let Some(image_bytes) = &self.image_bytes else {
+            self.status_message = "No embedded image available for overlay export".to_string();
+            return;
+        };
+
+        let Some([width, height]) = self.image_size else {
+            self.status_message = "No image size available for overlay export".to_string();
+            return;
+        };
+
+        let sequence_indices = self.export_sequence_indices();
+
+        if sequence_indices.is_empty() {
+            self.status_message = "No sequence selected for overlay export".to_string();
+            return;
+        }
+
+        if !export_logic::has_visible_overlay_content(
+            &self.editor.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        ) {
+            self.status_message = "Nothing to export for the selected overlay scope".to_string();
+            return;
+        }
+
+        let mime_type = guess_image_mime_type(image_bytes);
+
+        let svg_content = export_logic::build_svg_with_image_overlay(
+            width as u32,
+            height as u32,
+            image_bytes,
+            mime_type,
+            &self.editor.sequences,
+            &sequence_indices,
+            self.export_dialog.include_points_in_overlay,
+        );
+
+        let base_name = self
+            .image_name
+            .as_deref()
+            .map(export_logic::sanitize_file_name)
+            .unwrap_or_else(|| "exported_image".to_string());
+
+        let default_file_name = format!("{base_name}_overlay.svg");
+
+        let file = FileDialog::new()
+            .add_filter("SVG", &["svg"])
+            .set_file_name(&default_file_name)
+            .save_file();
+
+        let Some(path) = file else {
+            self.status_message = "Overlay SVG export cancelled".to_string();
+            return;
+        };
+
+        match std::fs::write(&path, svg_content) {
+            Ok(()) => {
+                self.status_message =
+                    format!("Exported image with overlay as SVG: {}", path.display());
+            }
+            Err(err) => {
+                self.status_message = format!("Failed to export overlay SVG: {err}");
+            }
+        }
+    }
+}
+
+// Best-effort MIME type for the currently loaded image bytes, used when
+// embedding the image inside an SVG document via a base64 data URI.
+//
+// Falls back to "image/png" for formats that are not explicitly mapped,
+// since that is the most common/safe assumption for this app's imports.
+fn guess_image_mime_type(image_bytes: &[u8]) -> &'static str {
+    match image::guess_format(image_bytes) {
+        Ok(image::ImageFormat::Png) => "image/png",
+        Ok(image::ImageFormat::Jpeg) => "image/jpeg",
+        Ok(image::ImageFormat::Gif) => "image/gif",
+        Ok(image::ImageFormat::WebP) => "image/webp",
+        Ok(image::ImageFormat::Bmp) => "image/bmp",
+        Ok(image::ImageFormat::Tiff) => "image/tiff",
+        _ => "image/png",
+    }
 }
 
 impl eframe::App for DotToDotStudioApp {
@@ -1438,6 +1630,7 @@ impl eframe::App for DotToDotStudioApp {
         project_panel::show_project_panel(ctx, self);
         sequences_panel::show_sequences_panel(ctx, self);
         export::show_export_dialog(ctx, self);
+        about::show_about_dialog(ctx, self);
 
         self.draw_central_panel(ctx);
         self.ui_placeholder(frame);

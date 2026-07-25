@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use crate::editor::SequenceItem;
 
 /// Sanitize a string so it can safely be used as a file name.
@@ -261,6 +263,135 @@ pub fn render_overlay_image(
     }
 
     rgba_image
+}
+
+/// Escape special XML characters so a string can safely be placed inside an
+/// SVG attribute or text node.
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Append `<g>` groups containing `<polyline>`/`<circle>` overlay elements for
+/// the selected sequences to an in-progress SVG document string.
+///
+/// This is shared by both SVG export variants (overlay-only and
+/// image-with-overlay) so the visual result always matches between them.
+fn append_svg_overlay_elements(
+    svg: &mut String,
+    sequences: &[SequenceItem],
+    sequence_indices: &[usize],
+    include_points: bool,
+) {
+    for &sequence_index in sequence_indices {
+        let Some(sequence) = sequences.get(sequence_index) else {
+            continue;
+        };
+
+        if !sequence.visible {
+            continue;
+        }
+
+        let rgb = format!(
+            "rgb({},{},{})",
+            sequence.color.r(),
+            sequence.color.g(),
+            sequence.color.b()
+        );
+        let opacity = sequence.color.a() as f32 / 255.0;
+
+        svg.push_str(&format!(
+            "  <g id=\"sequence-{sequence_index}\" data-name=\"{}\">\n",
+            escape_xml(&sequence.name)
+        ));
+
+        if sequence.points.len() >= 2 {
+            svg.push_str(&format!(
+                "    <polyline fill=\"none\" stroke=\"{rgb}\" stroke-opacity=\"{opacity:.3}\" stroke-width=\"{:.2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"",
+                sequence.line_thickness.max(1.0)
+            ));
+
+            for (point_index, point) in sequence.points.iter().enumerate() {
+                if point_index > 0 {
+                    svg.push(' ');
+                }
+                svg.push_str(&format!("{:.3},{:.3}", point.position.x, point.position.y));
+            }
+
+            svg.push_str("\" />\n");
+        }
+
+        if include_points {
+            for point in &sequence.points {
+                svg.push_str(&format!(
+                    "    <circle cx=\"{:.3}\" cy=\"{:.3}\" r=\"5\" fill=\"{rgb}\" fill-opacity=\"{opacity:.3}\" />\n",
+                    point.position.x, point.position.y
+                ));
+            }
+        }
+
+        svg.push_str("  </g>\n");
+    }
+}
+
+/// Build a standalone SVG document containing only the overlay graphics
+/// (lines and optional points) for the selected sequences.
+///
+/// Unlike the raster overlay export, the result has a transparent background
+/// and remains crisp at any zoom level or print size, since the shapes are
+/// real vector elements rather than stamped pixels.
+pub fn build_svg_overlay(
+    width: u32,
+    height: u32,
+    sequences: &[SequenceItem],
+    sequence_indices: &[usize],
+    include_points: bool,
+) -> String {
+    let mut svg = String::new();
+
+    svg.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">\n"
+    ));
+
+    append_svg_overlay_elements(&mut svg, sequences, sequence_indices, include_points);
+
+    svg.push_str("</svg>\n");
+    svg
+}
+
+/// Build a standalone SVG document that embeds the original raster image as a
+/// base64 data URI and draws the overlay graphics as vector shapes on top.
+///
+/// `mime_type` must match the encoding of `image_bytes` (e.g. `"image/png"`
+/// or `"image/jpeg"`) so viewers can decode the embedded image correctly.
+pub fn build_svg_with_image_overlay(
+    width: u32,
+    height: u32,
+    image_bytes: &[u8],
+    mime_type: &str,
+    sequences: &[SequenceItem],
+    sequence_indices: &[usize],
+    include_points: bool,
+) -> String {
+    let mut svg = String::new();
+
+    svg.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">\n"
+    ));
+
+    let encoded = STANDARD.encode(image_bytes);
+    svg.push_str(&format!(
+        "  <image x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" href=\"data:{mime_type};base64,{encoded}\" />\n"
+    ));
+
+    append_svg_overlay_elements(&mut svg, sequences, sequence_indices, include_points);
+
+    svg.push_str("</svg>\n");
+    svg
 }
 
 /// Render the original image plus sequence overlays.
