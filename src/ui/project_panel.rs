@@ -12,8 +12,8 @@ use eframe::egui;
 // - file name
 // - image dimensions
 // - file size
-pub fn show_project_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
-    egui::SidePanel::left("project_panel").resizable(true).default_size(260.0).show(ctx, |ui| {
+pub fn show_project_panel(ui: &mut egui::Ui, app: &mut DotToDotStudioApp) {
+    egui::Panel::left("project_panel").resizable(true).default_size(260.0).show(ui, |ui| {
         ui.heading(egui::RichText::new("Project").strong());
         ui.separator();
 

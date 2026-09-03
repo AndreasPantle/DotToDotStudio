@@ -1,5 +1,4 @@
 use crate::app::DotToDotStudioApp;
-use crate::editor::SequenceItem;
 use eframe::egui;
 
 // Draw the right side panel for sequence management.
@@ -21,8 +20,8 @@ use eframe::egui;
 // Because we borrow the selected sequence mutably while drawing those widgets,
 // we must NOT call dirty/renumber/remove logic that requires another mutable
 // borrow of the editor state inside that same borrow scope.
-pub fn show_sequences_panel(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
-    egui::SidePanel::right("sequences_panel").resizable(true).default_size(300.0).show(ctx, |ui| {
+pub fn show_sequences_panel(ui: &mut egui::Ui, app: &mut DotToDotStudioApp) {
+    egui::Panel::right("sequences_panel").resizable(true).default_size(300.0).show(ui, |ui| {
         ui.heading(egui::RichText::new("Sequences").strong());
         ui.separator();
 

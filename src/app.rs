@@ -485,8 +485,9 @@ impl DotToDotStudioApp {
     }
 
     // Draw the top menu bar.
-    fn draw_menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+    fn draw_menu_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     let has_image = self.image_bytes.is_some();
@@ -503,7 +504,7 @@ impl DotToDotStudioApp {
 
                     if ui.button("Open Project...\tCtrl+L").clicked() {
                         if self.confirm_discard_unsaved_changes("Open Project") {
-                            self.load_project(ctx);
+                            self.load_project(&ctx);
                         } else {
                             self.status_message = "Open project cancelled".to_string();
                         }
@@ -516,7 +517,7 @@ impl DotToDotStudioApp {
                         .add_enabled(can_import_image, egui::Button::new("Import Image...\tCtrl+O"))
                         .clicked()
                     {
-                        self.import_image(ctx);
+                        self.import_image(&ctx);
                         ui.close();
                     }
 
@@ -545,7 +546,7 @@ impl DotToDotStudioApp {
                     ui.separator();
 
                     if ui.button("Quit\tCtrl+Q").clicked() {
-                        self.request_quit(ctx);
+                        self.request_quit(&ctx);
                         ui.close();
                     }
                 });
@@ -599,8 +600,8 @@ impl DotToDotStudioApp {
     }
 
     // Draw the status bar at the bottom of the window.
-    fn draw_status_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+    fn draw_status_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status_bar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(&self.status_message);
 
@@ -638,8 +639,8 @@ impl DotToDotStudioApp {
     }
 
     // Draw the main work area in the center of the window.
-    fn draw_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn draw_central_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default().show(ui, |ui| {
             if let Some(texture) = &self.image_texture {
                 let texture_id = texture.id();
                 let texture_size = texture.size_vec2();
@@ -1607,11 +1608,12 @@ fn guess_image_mime_type(image_bytes: &[u8]) -> &'static str {
 }
 
 impl eframe::App for DotToDotStudioApp {
-    // `update()` is the heart of an egui app.
+    // `ui()` is the heart of an egui app.
     //
     // It is called repeatedly every frame. In immediate mode GUI, we rebuild
     // the full UI each frame from the current state.
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         let close_requested = ctx.input(|i| i.viewport().close_requested());
 
         if close_requested {
@@ -1619,23 +1621,20 @@ impl eframe::App for DotToDotStudioApp {
                 // Allow this close request to proceed without showing the dialog again.
             } else if self.editor.has_unsaved_changes {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.handle_close_request(ctx);
+                self.handle_close_request(&ctx);
             }
         }
 
-        self.handle_shortcuts(ctx);
-        self.draw_menu_bar(ctx);
-        self.draw_status_bar(ctx);
+        self.handle_shortcuts(&ctx);
+        self.draw_menu_bar(ui);
+        self.draw_status_bar(ui);
 
-        project_panel::show_project_panel(ctx, self);
-        sequences_panel::show_sequences_panel(ctx, self);
-        export::show_export_dialog(ctx, self);
-        about::show_about_dialog(ctx, self);
+        project_panel::show_project_panel(ui, self);
+        sequences_panel::show_sequences_panel(ui, self);
+        export::show_export_dialog(&ctx, self);
+        about::show_about_dialog(&ctx, self);
 
-        self.draw_central_panel(ctx);
+        self.draw_central_panel(ui);
         self.ui_placeholder(frame);
     }
-
-    // The current setup also expects this method.
-    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
