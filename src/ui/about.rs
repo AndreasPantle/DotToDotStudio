@@ -1,4 +1,5 @@
 use crate::app::DotToDotStudioApp;
+use crate::resources::DOTTODOTSTUDIO_ICON_BYTES;
 use eframe::egui;
 
 // -----------------------------------------------------------------------
@@ -64,14 +65,39 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 //
 // This stays in the app adapter layer, mirroring `ExportDialogState`, since
 // it is tied directly to the current GUI implementation.
+#[derive(Default)]
 pub struct AboutDialogState {
     pub open: bool,
+
+    // Lazily decoded/uploaded on first display and cached here for the
+    // lifetime of the app, so the PNG is decoded and sent to the GPU once
+    // rather than every frame the dialog is open.
+    icon_texture: Option<egui::TextureHandle>,
 }
 
-impl Default for AboutDialogState {
-    fn default() -> Self {
-        Self { open: false }
-    }
+// Decode the bundled app icon and upload it as an egui texture.
+//
+// The icon is compiled into the binary via `include_bytes!` (see
+// `resources::DOTTODOTSTUDIO_ICON_BYTES`), so decoding it can only fail if
+// that asset itself is corrupt — treated as a programmer error, not
+// something to recover from at runtime.
+//
+// The bundled PNG is pre-shrunk to `assets/icon-about-192.png` (2x the
+// `ICON_SIZE` this dialog displays it at) rather than the full 1024px app
+// icon. egui has no mipmapping, so shrinking a 1024px texture down to ~96
+// points at draw time aliases badly; downscaling ahead of time keeps the
+// runtime ratio small enough to look sharp.
+fn load_icon_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let dynamic_image = image::load_from_memory(DOTTODOTSTUDIO_ICON_BYTES)
+        .expect("bundled app icon PNG must decode");
+    let rgba_image = dynamic_image.to_rgba8();
+    let width = rgba_image.width() as usize;
+    let height = rgba_image.height() as usize;
+    let pixels = rgba_image.into_raw();
+
+    let color_image = egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+
+    ctx.load_texture("about_dialog_icon", color_image, egui::TextureOptions::default())
 }
 
 // Draw the About dialog.
@@ -94,10 +120,6 @@ pub fn show_about_dialog(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
         .default_width(440.0)
         .default_height(420.0)
         .show(ctx, |ui| {
-            ui.heading(egui::RichText::new("About DotToDotStudio").strong());
-            ui.separator();
-            ui.add_space(8.0);
-
             // Use a fixed height here, not something derived from
             // `ui.available_height()`. Deriving it from the current frame's
             // available space creates a feedback loop: any tiny layout change
@@ -109,6 +131,25 @@ pub fn show_about_dialog(ctx: &egui::Context, app: &mut DotToDotStudioApp) {
             // A constant value breaks that loop: the content height is the
             // same every frame regardless of hover state or window size.
             const SCROLL_AREA_HEIGHT: f32 = 300.0;
+            const ICON_SIZE: f32 = 96.0;
+
+            let icon_texture = app
+                .about_dialog
+                .icon_texture
+                .get_or_insert_with(|| load_icon_texture(ctx))
+                .clone();
+
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::new((icon_texture.id(), icon_texture.size_vec2()))
+                        .max_size(egui::vec2(ICON_SIZE, ICON_SIZE)),
+                );
+            });
+            ui.add_space(8.0);
+
+            ui.heading(egui::RichText::new("About DotToDotStudio").strong());
+            ui.separator();
+            ui.add_space(8.0);
 
             egui::ScrollArea::vertical()
                 .max_height(SCROLL_AREA_HEIGHT)
