@@ -2,6 +2,7 @@ mod app;
 mod editor;
 mod export_logic;
 mod model;
+mod resources;
 mod storage;
 mod ui;
 
