@@ -1,0 +1,148 @@
+name: Release
+
+# Runs whenever a version tag is pushed: git tag v1.2.3 && git push --tags
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write   # needed to create GitHub Releases and upload assets
+
+env:
+  BIN_NAME: DotToDotStudio
+
+jobs:
+
+  # ── Linux ─────────────────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-22.04   # glibc 2.35 — broader compatibility than Fedora
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        # eframe (winit + glow) needs X11/Wayland dev headers to compile against.
+        # rfd's default Linux backend here is "xdg-portal" (see Cargo.lock: no
+        # gtk-sys present), which talks to the desktop's xdg-desktop-portal
+        # service at *runtime* over D-Bus — nothing extra needed to build it.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxcb1-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libgl1-mesa-dev
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="$BIN_NAME-$VERSION-linux-x86_64"
+          mkdir "$STAGING"
+          cp "target/release/$BIN_NAME" "$STAGING/"
+          cp LICENSE README.md "$STAGING/"
+          tar czf "$STAGING.tar.gz" "$STAGING"
+          echo "ARCHIVE=$STAGING.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-archive
+          path: ${{ env.ARCHIVE }}
+
+  # ── macOS ─────────────────────────────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest   # Apple Silicon ARM64 — Intel Macs not supported
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="$BIN_NAME-$VERSION-macos-aarch64"
+          mkdir "$STAGING"
+          cp "target/release/$BIN_NAME" "$STAGING/"
+          cp LICENSE README.md "$STAGING/"
+          tar czf "$STAGING.tar.gz" "$STAGING"
+          echo "ARCHIVE=$STAGING.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-archive
+          path: ${{ env.ARCHIVE }}
+
+  # ── Windows ───────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $staging = "$env:BIN_NAME-$version-windows-x86_64"
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item "target\release\$env:BIN_NAME.exe" $staging
+          Copy-Item LICENSE, README.md $staging
+          Compress-Archive -Path $staging -DestinationPath "$staging.zip"
+          echo "ARCHIVE=$staging.zip" >> $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-archive
+          path: ${{ env.ARCHIVE }}
+
+  # ── GitHub Release ─────────────────────────────────────────────────────────
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true   # places all files flat in the working directory
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DotToDotStudio-*-linux-x86_64.tar.gz
+            DotToDotStudio-*-macos-aarch64.tar.gz
+            DotToDotStudio-*-windows-x86_64.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
