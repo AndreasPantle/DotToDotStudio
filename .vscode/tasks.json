@@ -24,6 +24,16 @@
       "args": ["test"],
       "group": "test",
       "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo clean",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["clean"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
     }
   ]
 }
